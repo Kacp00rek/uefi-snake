@@ -89,7 +89,7 @@ int handleKey(EFI_SYSTEM_TABLE *SystemTable, struct Snake *snake){
 void snakeMove(EFI_GRAPHICS_OUTPUT_PROTOCOL *gop, struct Snake *snake, struct BoardData *board){
         UINT32 color;
         int rowIndex = snake->y / board->segmentSize, colIndex = snake->x / board->segmentSize;
-        if((rowIndex+colIndex)%2==0){
+        if((rowIndex+colIndex) % 2 == 0){
                 color = board->color1;
         }
         else{
