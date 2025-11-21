@@ -3,6 +3,8 @@
 
 #define OK      0
 #define QUIT    1
+#define DIED    1
+#define LIVES   0
 
 struct Pair{
     int x, y;
@@ -21,13 +23,41 @@ struct BoardData{
     int segmentSize;
 };
 
+struct Vector{
+    struct Pair* data;
+    int capacity;
+    int size;
+};
+
 struct Snake{
-    int x;
-    int y;
+    struct Vector segments;
     struct Pair direction;
+    struct Pair previousDirection;
     UINT32 color;
     int length;
 };
+
+void push_back(EFI_SYSTEM_TABLE *SystemTable, struct Vector *snake, struct Pair *segment){
+        if(snake->size == snake->capacity){
+                int newCapacity = snake->capacity * 2;
+                struct Pair* newData = NULL;
+                struct Pair* oldData = snake->data;
+                
+                uefi_call_wrapper(SystemTable->BootServices->AllocatePool, 3,
+                                  EfiLoaderData,
+                                  newCapacity * sizeof(struct Pair),
+                                  (void**)&newData
+                );
+                for(int i = 0; i < snake->size; i++){
+                        newData[i] = oldData[i];
+                }
+                uefi_call_wrapper(SystemTable->BootServices->FreePool, 1, oldData);
+                snake->data = newData;
+                snake->capacity = newCapacity;
+        }
+        snake->data[snake->size] = *segment;
+        snake->size++;
+}
 
 void putPixel(EFI_GRAPHICS_OUTPUT_PROTOCOL *gop, int x, int y, UINT32 color){
         UINT32* location = (UINT32*)gop->Mode->FrameBufferBase;
@@ -60,6 +90,10 @@ void drawBoard(EFI_GRAPHICS_OUTPUT_PROTOCOL *gop, struct BoardData *board){
         }
 }
 
+bool areOpposite(struct Pair a, struct Pair b){
+        return a.x + b.x == 0 && a.y + b.y == 0;
+}
+
 int handleKey(EFI_SYSTEM_TABLE *SystemTable, struct Snake *snake){
         EFI_INPUT_KEY key;
         EFI_STATUS status = uefi_call_wrapper(SystemTable->ConIn->ReadKeyStroke, 2, SystemTable->ConIn, &key);
@@ -69,16 +103,24 @@ int handleKey(EFI_SYSTEM_TABLE *SystemTable, struct Snake *snake){
         }
 
         if(key.UnicodeChar == 'w'){
-                snake->direction = UP;
+                if(!areOpposite(snake->previousDirection, UP)){
+                        snake->direction = UP;
+                }
         }
         else if(key.UnicodeChar == 'd'){
-                snake->direction = RIGHT;
+                if(!areOpposite(snake->previousDirection, RIGHT)){
+                        snake->direction = RIGHT;
+                }
         }
         else if(key.UnicodeChar == 's'){
-                snake->direction = DOWN;
+                if(!areOpposite(snake->previousDirection, DOWN)){
+                        snake->direction = DOWN;
+                }
         }
         else if(key.UnicodeChar == 'a'){
-                snake->direction = LEFT;
+                if(!areOpposite(snake->previousDirection, LEFT)){
+                        snake->direction = LEFT;
+                }
         }
         else if(key.UnicodeChar == 'q'){
                 return QUIT;
@@ -86,19 +128,45 @@ int handleKey(EFI_SYSTEM_TABLE *SystemTable, struct Snake *snake){
         return OK;
 }
 
-void snakeMove(EFI_GRAPHICS_OUTPUT_PROTOCOL *gop, struct Snake *snake, struct BoardData *board){
-        UINT32 color;
-        int rowIndex = snake->y / board->segmentSize, colIndex = snake->x / board->segmentSize;
-        if((rowIndex+colIndex) % 2 == 0){
-                color = board->color1;
+int snakeMove(EFI_GRAPHICS_OUTPUT_PROTOCOL *gop, struct Snake *snake, struct BoardData *board, struct Pair *target, EFI_SYSTEM_TABLE *SystemTable){
+        struct Pair* head = &snake->segments.data[0];
+        int newX = head->x + snake->direction.x * board->segmentSize;
+        int newY = head->y + snake->direction.y * board->segmentSize;
+
+
+        bool hitWall = (newX >= board->width || newY >= board->height || newX < 0 || newY < 0);
+        if(hitWall){
+                return DIED;
+        }
+
+        bool ateTarget = (newX == target->x && newY == target->y);
+        if(!ateTarget){
+                UINT32 color;
+                struct Pair *tail = &snake->segments.data[snake->segments.size - 1];
+                int rowIndex = tail->y / board->segmentSize, colIndex = tail->x / board->segmentSize;
+                if((rowIndex+colIndex) % 2 == 0){
+                        color = board->color1;
+                }
+                else{
+                        color = board->color2;
+                }
+                drawRect(gop, tail->x, tail->y, board->segmentSize, board->segmentSize, color);
         }
         else{
-                color = board->color2;
+                struct Pair temp = {0,0};
+                push_back(SystemTable, &snake->segments, &temp);
         }
-        drawRect(gop, snake->x, snake->y, board->segmentSize, board->segmentSize, color);
-        snake->x += snake->direction.x * board->segmentSize;
-        snake->y += snake->direction.y * board->segmentSize;
-        drawRect(gop, snake->x, snake->y, board->segmentSize, board->segmentSize, snake->color);
+
+        for(int i = snake->segments.size - 1; i > 0; i--){
+                snake->segments.data[i] = snake->segments.data[i - 1];
+        }
+
+        head->x = newX;
+        head->y = newY;
+
+        drawRect(gop, head->x, head->y, board->segmentSize, board->segmentSize, snake->color);
+        snake->previousDirection = snake->direction;
+        return LIVES;
 }
 
 EFI_STATUS
@@ -131,25 +199,51 @@ efi_main (EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable){
         }
         uefi_call_wrapper(gop->SetMode, 2, gop, 0);
 
-        int interval = 2500000;        
-        int width = gop->Mode->Info->HorizontalResolution;
-        int height = gop->Mode->Info->VerticalResolution;
+        int interval = 2500000, segmentSize = 50;        
+        int width = (gop->Mode->Info->HorizontalResolution / segmentSize) * segmentSize;
+        int height = (gop->Mode->Info->VerticalResolution / segmentSize) * segmentSize;
 
         struct BoardData board = {
                 .width = width, 
                 .height = height, 
                 .color1 = 0x0090EE90,
                 .color2 = 0x0006402B,
-                .segmentSize = 50,
+                .segmentSize = segmentSize,
         };
 
+        struct Vector segments = {
+                .capacity = 1,
+                .size = 0
+        };
+
+        uefi_call_wrapper(SystemTable->BootServices->AllocatePool, 3,
+                                  EfiLoaderData,
+                                  sizeof(struct Pair),
+                                  (void**)&segments.data
+        );
+
+        struct Pair start = {100, 100};
+        push_back(SystemTable, &segments, &start);
+
+        start = (struct Pair){50, 100};
+        push_back(SystemTable, &segments, &start);
+
+        start = (struct Pair){0, 100};
+        push_back(SystemTable, &segments, &start);
+
+
         struct Snake snake = {
-                .x = 100, 
-                .y = 100, 
+                .segments = segments,
                 .direction = RIGHT,
+                .previousDirection = RIGHT,
                 .color = 0x000000FF, 
                 .length = 1
         };
+
+        struct Pair target = {-1, -1};
+
+
+
         EFI_EVENT events[2];
         uefi_call_wrapper(SystemTable->BootServices->CreateEvent, 5, EVT_TIMER, 0, NULL, NULL, &events[0]);
         uefi_call_wrapper(SystemTable->BootServices->SetTimer, 3, events[0], TimerPeriodic, interval);
@@ -160,7 +254,10 @@ efi_main (EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable){
                 UINTN index;
                 uefi_call_wrapper(SystemTable->BootServices->WaitForEvent, 3, 2, events, &index);
                 if(index == 0){
-                        snakeMove(gop, &snake, &board);
+                        int snakeStatus = snakeMove(gop, &snake, &board, &target, SystemTable);
+                        if(snakeStatus == DIED){
+                                break;
+                        }
                 }
                 else if(index == 1){
                         int q = handleKey(SystemTable, &snake);
@@ -176,4 +273,3 @@ efi_main (EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable){
 
         return EFI_SUCCESS;
 }
-//TESTING ACCESS

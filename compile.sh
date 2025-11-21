@@ -3,14 +3,16 @@
 EFI_DIR="$HOME/gnu-efi"
 
 gcc -I"$EFI_DIR/inc" -fpic -ffreestanding -fno-stack-protector -fno-stack-check \
-    -fshort-wchar -mno-red-zone -maccumulate-outgoing-args \
-    -c main.c -o main.o
+    -fshort-wchar -mno-red-zone -maccumulate-outgoing-args -ggdb \
+    -c main.c -o main.o 
 
 ld -shared -Bsymbolic \
    -L"$EFI_DIR/x86_64/lib" -L"$EFI_DIR/x86_64/gnuefi" \
    -T"$EFI_DIR/gnuefi/elf_x86_64_efi.lds" \
    "$EFI_DIR/x86_64/gnuefi/crt0-efi-x86_64.o" main.o \
    -o main.so -lgnuefi -lefi
+
+objcopy --only-keep-debug main.so main.efi.debug
 
 objcopy -j .text -j .sdata -j .data -j .rodata -j .dynamic -j .dynsym \
         -j .rel -j .rela -j .rel.* -j .rela.* -j .reloc \
