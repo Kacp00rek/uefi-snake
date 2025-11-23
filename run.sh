@@ -7,7 +7,7 @@ chmod u+rw ~/efi-vars/OVMF_VARS.fd
 if [ "$1" == "debug" ]; then
   echo "DEBUG MODE IS TURNED ON"
   qemu-system-x86_64 \
-  -cpu qemu64 \
+  -cpu qemu64,rdrand=on \
   -drive if=pflash,format=raw,unit=0,file=/usr/share/edk2/ovmf/OVMF_CODE.fd,readonly=on \
   -drive if=pflash,format=raw,unit=1,file=$HOME/efi-vars/OVMF_VARS.fd \
   -drive format=raw,file=efi.img \
@@ -16,7 +16,7 @@ if [ "$1" == "debug" ]; then
   -s -S
 else
   qemu-system-x86_64 \
-  -cpu qemu64 \
+  -cpu qemu64,rdrand=on \
   -drive if=pflash,format=raw,unit=0,file=/usr/share/edk2/ovmf/OVMF_CODE.fd,readonly=on \
   -drive if=pflash,format=raw,unit=1,file=$HOME/efi-vars/OVMF_VARS.fd \
   -drive format=raw,file=efi.img \

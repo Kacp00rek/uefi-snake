@@ -21,6 +21,9 @@ struct BoardData{
     UINT32 color1;
     UINT32 color2;
     int segmentSize;
+    struct Pair target;
+    UINT32 targetColor;
+    bool targetAlive;
 };
 
 struct Vector{
@@ -34,7 +37,6 @@ struct Snake{
     struct Pair direction;
     struct Pair previousDirection;
     UINT32 color;
-    int length;
 };
 
 void push_back(EFI_SYSTEM_TABLE *SystemTable, struct Vector *snake, struct Pair *segment){
@@ -57,6 +59,19 @@ void push_back(EFI_SYSTEM_TABLE *SystemTable, struct Vector *snake, struct Pair 
         }
         snake->data[snake->size] = *segment;
         snake->size++;
+}
+
+EFI_STATUS random(EFI_RNG_PROTOCOL *rng, struct BoardData *board){
+        UINT32 x, y;
+        EFI_STATUS status;
+        int rangeX = board->width / board->segmentSize;
+        int rangeY = board->height / board->segmentSize;
+        status = uefi_call_wrapper(rng->GetRNG, 4, rng, NULL, sizeof(UINT32), (UINT8*)&x);
+        status = uefi_call_wrapper(rng->GetRNG, 4, rng, NULL, sizeof(UINT32), (UINT8*)&y);
+        board->target.x = (int)(x % rangeX) * board->segmentSize;
+        board->target.y = (int)(y % rangeY) * board->segmentSize;
+        
+        return status;
 }
 
 void putPixel(EFI_GRAPHICS_OUTPUT_PROTOCOL *gop, int x, int y, UINT32 color){
@@ -88,6 +103,7 @@ void drawBoard(EFI_GRAPHICS_OUTPUT_PROTOCOL *gop, struct BoardData *board){
                         drawRect(gop, x, y, size, size, currColor);
                 }
         }
+        drawRect(gop, board->target.x, board->target.y, size, size, board->targetColor);
 }
 
 bool areOpposite(struct Pair a, struct Pair b){
@@ -103,22 +119,22 @@ int handleKey(EFI_SYSTEM_TABLE *SystemTable, struct Snake *snake){
         }
 
         if(key.UnicodeChar == 'w'){
-                if(!areOpposite(snake->previousDirection, UP)){
+                if(snake->segments.size == 1 || !areOpposite(snake->previousDirection, UP)){
                         snake->direction = UP;
                 }
         }
         else if(key.UnicodeChar == 'd'){
-                if(!areOpposite(snake->previousDirection, RIGHT)){
+                if(snake->segments.size == 1 || !areOpposite(snake->previousDirection, RIGHT)){
                         snake->direction = RIGHT;
                 }
         }
         else if(key.UnicodeChar == 's'){
-                if(!areOpposite(snake->previousDirection, DOWN)){
+                if(snake->segments.size == 1 || !areOpposite(snake->previousDirection, DOWN)){
                         snake->direction = DOWN;
                 }
         }
         else if(key.UnicodeChar == 'a'){
-                if(!areOpposite(snake->previousDirection, LEFT)){
+                if(snake->segments.size == 1 || !areOpposite(snake->previousDirection, LEFT)){
                         snake->direction = LEFT;
                 }
         }
@@ -128,7 +144,7 @@ int handleKey(EFI_SYSTEM_TABLE *SystemTable, struct Snake *snake){
         return OK;
 }
 
-int snakeMove(EFI_GRAPHICS_OUTPUT_PROTOCOL *gop, struct Snake *snake, struct BoardData *board, struct Pair *target, EFI_SYSTEM_TABLE *SystemTable){
+int snakeMove(EFI_GRAPHICS_OUTPUT_PROTOCOL *gop, struct Snake *snake, struct BoardData *board, EFI_SYSTEM_TABLE *SystemTable){
         struct Pair* head = &snake->segments.data[0];
         int newX = head->x + snake->direction.x * board->segmentSize;
         int newY = head->y + snake->direction.y * board->segmentSize;
@@ -139,7 +155,7 @@ int snakeMove(EFI_GRAPHICS_OUTPUT_PROTOCOL *gop, struct Snake *snake, struct Boa
                 return DIED;
         }
 
-        bool ateTarget = (newX == target->x && newY == target->y);
+        bool ateTarget = (newX == board->target.x && newY == board->target.y);
         if(!ateTarget){
                 UINT32 color;
                 struct Pair *tail = &snake->segments.data[snake->segments.size - 1];
@@ -153,8 +169,10 @@ int snakeMove(EFI_GRAPHICS_OUTPUT_PROTOCOL *gop, struct Snake *snake, struct Boa
                 drawRect(gop, tail->x, tail->y, board->segmentSize, board->segmentSize, color);
         }
         else{
+                board->targetAlive = false;
                 struct Pair temp = {0,0};
                 push_back(SystemTable, &snake->segments, &temp);
+                head = &snake->segments.data[0];
         }
 
         for(int i = snake->segments.size - 1; i > 0; i--){
@@ -190,14 +208,24 @@ efi_main (EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable){
 
         EFI_GRAPHICS_OUTPUT_PROTOCOL *gop;
         EFI_GUID gopGuid = EFI_GRAPHICS_OUTPUT_PROTOCOL_GUID;
-        EFI_STATUS status = uefi_call_wrapper(SystemTable->BootServices->LocateProtocol, 3, &gopGuid, NULL, (void**)&gop);
+        EFI_STATUS gopStatus = uefi_call_wrapper(SystemTable->BootServices->LocateProtocol, 3, &gopGuid, NULL, (void**)&gop);
 
-        if(EFI_ERROR(status)){
+        if(EFI_ERROR(gopStatus)){
                 uefi_call_wrapper(SystemTable->ConOut->OutputString, 2, SystemTable->ConOut, u"Couldn't get GOP");
                 uefi_call_wrapper(SystemTable->RuntimeServices->ResetSystem, 4, EfiResetShutdown, EFI_SUCCESS, 0, NULL);
                 return EFI_SUCCESS;
         }
         uefi_call_wrapper(gop->SetMode, 2, gop, 0);
+
+        EFI_RNG_PROTOCOL *rng;
+        EFI_GUID rngGuid = EFI_RNG_PROTOCOL_GUID;
+        EFI_STATUS rngStatus = uefi_call_wrapper(SystemTable->BootServices->LocateProtocol, 3, &rngGuid, NULL, (void**)&rng);
+
+        if(EFI_ERROR(rngStatus)){
+                uefi_call_wrapper(SystemTable->ConOut->OutputString, 2, SystemTable->ConOut, u"Couldn't get RNG Protocol");
+                uefi_call_wrapper(SystemTable->RuntimeServices->ResetSystem, 4, EfiResetShutdown, EFI_SUCCESS, 0, NULL);
+                return EFI_SUCCESS;
+        }
 
         int interval = 2500000, segmentSize = 50;        
         int width = (gop->Mode->Info->HorizontalResolution / segmentSize) * segmentSize;
@@ -208,7 +236,9 @@ efi_main (EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable){
                 .height = height, 
                 .color1 = 0x0090EE90,
                 .color2 = 0x0006402B,
+                .targetColor = 0x00FF0000,
                 .segmentSize = segmentSize,
+                .targetAlive = true
         };
 
         struct Vector segments = {
@@ -225,24 +255,19 @@ efi_main (EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable){
         struct Pair start = {100, 100};
         push_back(SystemTable, &segments, &start);
 
-        start = (struct Pair){50, 100};
-        push_back(SystemTable, &segments, &start);
-
-        start = (struct Pair){0, 100};
-        push_back(SystemTable, &segments, &start);
-
 
         struct Snake snake = {
                 .segments = segments,
                 .direction = RIGHT,
                 .previousDirection = RIGHT,
-                .color = 0x000000FF, 
-                .length = 1
+                .color = 0x000000FF
         };
 
-        struct Pair target = {-1, -1};
-
-
+        EFI_STATUS randStatus = random(rng, &board);
+        if(EFI_ERROR(randStatus)){
+                uefi_call_wrapper(SystemTable->RuntimeServices->ResetSystem, 4, EfiResetShutdown, EFI_SUCCESS, 0, NULL);
+                return EFI_SUCCESS;
+        }
 
         EFI_EVENT events[2];
         uefi_call_wrapper(SystemTable->BootServices->CreateEvent, 5, EVT_TIMER, 0, NULL, NULL, &events[0]);
@@ -254,9 +279,14 @@ efi_main (EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable){
                 UINTN index;
                 uefi_call_wrapper(SystemTable->BootServices->WaitForEvent, 3, 2, events, &index);
                 if(index == 0){
-                        int snakeStatus = snakeMove(gop, &snake, &board, &target, SystemTable);
+                        int snakeStatus = snakeMove(gop, &snake, &board, SystemTable);
                         if(snakeStatus == DIED){
                                 break;
+                        }
+                        if(!board.targetAlive){
+                                random(rng, &board);
+                                board.targetAlive = true;
+                                drawRect(gop, board.target.x, board.target.y, board.segmentSize, board.segmentSize, board.targetColor);
                         }
                 }
                 else if(index == 1){
