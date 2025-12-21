@@ -61,16 +61,38 @@ void push_back(EFI_SYSTEM_TABLE *SystemTable, struct Vector *snake, struct Pair 
         snake->size++;
 }
 
-EFI_STATUS random(EFI_RNG_PROTOCOL *rng, struct BoardData *board){
-        UINT32 x, y;
+bool isFree(int x, int y, struct Snake *snake){
+        for(int i = 0; i < snake->segments.size; i++){
+                if(x == snake->segments.data[i].x && y == snake->segments.data[i].y){
+                        return false;
+                }
+        }
+        return true;
+}
+
+EFI_STATUS random(EFI_RNG_PROTOCOL *rng, struct BoardData *board, struct Snake *snake){
+        UINT32 index;
         EFI_STATUS status;
-        int rangeX = board->width / board->segmentSize;
-        int rangeY = board->height / board->segmentSize;
-        status = uefi_call_wrapper(rng->GetRNG, 4, rng, NULL, sizeof(UINT32), (UINT8*)&x);
-        status = uefi_call_wrapper(rng->GetRNG, 4, rng, NULL, sizeof(UINT32), (UINT8*)&y);
-        board->target.x = (int)(x % rangeX) * board->segmentSize;
-        board->target.y = (int)(y % rangeY) * board->segmentSize;
-        
+        int size = board->segmentSize;
+        int rangeX = board->width / size;
+        int rangeY = board->height / size;
+        int range = rangeX * rangeY - snake->segments.size;
+
+        status = uefi_call_wrapper(rng->GetRNG, 4, rng, NULL, sizeof(UINT32), (UINT8*)&index);
+        index %= range;
+
+        for(int y = 0; y + size <= board->height; y += size){
+                for(int x = 0; x + size <= board->width; x += size){
+                        if(isFree(x, y, snake)){
+                                if(index == 0){
+                                        board->target.x = x;
+                                        board->target.y = y;
+                                        return status;
+                                }
+                                index--;
+                        }
+                }
+        }
         return status;
 }
 
@@ -144,6 +166,17 @@ int handleKey(EFI_SYSTEM_TABLE *SystemTable, struct Snake *snake){
         return OK;
 }
 
+bool checkCollision(struct Snake *snake){
+        int headX = snake->segments.data[0].x;
+        int headY = snake->segments.data[0].y;
+        for(int i = 1; i < snake->segments.size; i++){
+                if(headX == snake->segments.data[i].x && headY == snake->segments.data[i].y){
+                        return true;
+                }
+        }
+        return false;
+}
+
 int snakeMove(EFI_GRAPHICS_OUTPUT_PROTOCOL *gop, struct Snake *snake, struct BoardData *board, EFI_SYSTEM_TABLE *SystemTable){
         struct Pair* head = &snake->segments.data[0];
         int newX = head->x + snake->direction.x * board->segmentSize;
@@ -184,6 +217,10 @@ int snakeMove(EFI_GRAPHICS_OUTPUT_PROTOCOL *gop, struct Snake *snake, struct Boa
 
         drawRect(gop, head->x, head->y, board->segmentSize, board->segmentSize, snake->color);
         snake->previousDirection = snake->direction;
+        bool collision = checkCollision(snake);
+        if(collision){
+                return DIED;
+        }
         return LIVES;
 }
 
@@ -263,7 +300,7 @@ efi_main (EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable){
                 .color = 0x000000FF
         };
 
-        EFI_STATUS randStatus = random(rng, &board);
+        EFI_STATUS randStatus = random(rng, &board, &snake);
         if(EFI_ERROR(randStatus)){
                 uefi_call_wrapper(SystemTable->RuntimeServices->ResetSystem, 4, EfiResetShutdown, EFI_SUCCESS, 0, NULL);
                 return EFI_SUCCESS;
@@ -284,7 +321,7 @@ efi_main (EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable){
                                 break;
                         }
                         if(!board.targetAlive){
-                                random(rng, &board);
+                                random(rng, &board, &snake);
                                 board.targetAlive = true;
                                 drawRect(gop, board.target.x, board.target.y, board.segmentSize, board.segmentSize, board.targetColor);
                         }
