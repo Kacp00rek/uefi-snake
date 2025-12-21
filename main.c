@@ -5,6 +5,9 @@
 #define QUIT    1
 #define DIED    1
 #define LIVES   0
+#define PLAY    0
+#define SCANCODE_DOWN_ARROW     0x2
+#define SCANCODE_UP_ARROW       0x1   
 
 struct Pair{
     int x, y;
@@ -59,6 +62,17 @@ void push_back(EFI_SYSTEM_TABLE *SystemTable, struct Vector *snake, struct Pair 
         }
         snake->data[snake->size] = *segment;
         snake->size++;
+}
+
+EFI_INPUT_KEY getKey(EFI_SYSTEM_TABLE *SystemTable){
+        EFI_EVENT events[1];
+        EFI_INPUT_KEY key;
+        events[0] = SystemTable->ConIn->WaitForKey;
+        UINTN index = 0;
+        uefi_call_wrapper(SystemTable->BootServices->WaitForEvent, 3, 1, events, &index);
+        uefi_call_wrapper(SystemTable->ConIn->ReadKeyStroke, 2, SystemTable->ConIn, &key);
+        
+        return key;
 }
 
 bool isFree(int x, int y, struct Snake *snake){
@@ -224,25 +238,7 @@ int snakeMove(EFI_GRAPHICS_OUTPUT_PROTOCOL *gop, struct Snake *snake, struct Boa
         return LIVES;
 }
 
-EFI_STATUS
-EFIAPI
-efi_main (EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable){
-        (void)ImageHandle;
-
-        //FOR DEBUGGING
-        EFI_LOADED_IMAGE_PROTOCOL *loaded_image;
-        EFI_GUID LoadedImageProtocolGUID = EFI_LOADED_IMAGE_PROTOCOL_GUID;
-        uefi_call_wrapper(SystemTable->BootServices->HandleProtocol, 3, ImageHandle, &LoadedImageProtocolGUID, (void **)&loaded_image);
-        volatile uint64_t *marker_ptr = (uint64_t *)0x10000;
-        volatile uint64_t *image_base_ptr = (uint64_t *)0x10008;
-        *image_base_ptr = (uint64_t)loaded_image->ImageBase;
-        *marker_ptr = 0xDEADBEEF;
-        //Print(L"Program loaded at: 0x%lx\n", (UINT64)loaded_image->ImageBase);
-        //FOR DEBUGGING
-
-        uefi_call_wrapper(SystemTable->ConOut->SetAttribute, 2, SystemTable->ConOut, EFI_TEXT_ATTR(EFI_WHITE, EFI_BLACK));
-        uefi_call_wrapper(SystemTable->ConOut->ClearScreen, 1, SystemTable->ConOut);
-
+int snake(EFI_SYSTEM_TABLE *SystemTable){
         EFI_GRAPHICS_OUTPUT_PROTOCOL *gop;
         EFI_GUID gopGuid = EFI_GRAPHICS_OUTPUT_PROTOCOL_GUID;
         EFI_STATUS gopStatus = uefi_call_wrapper(SystemTable->BootServices->LocateProtocol, 3, &gopGuid, NULL, (void**)&gop);
@@ -250,7 +246,7 @@ efi_main (EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable){
         if(EFI_ERROR(gopStatus)){
                 uefi_call_wrapper(SystemTable->ConOut->OutputString, 2, SystemTable->ConOut, u"Couldn't get GOP");
                 uefi_call_wrapper(SystemTable->RuntimeServices->ResetSystem, 4, EfiResetShutdown, EFI_SUCCESS, 0, NULL);
-                return EFI_SUCCESS;
+                return -1;
         }
         uefi_call_wrapper(gop->SetMode, 2, gop, 0);
 
@@ -261,7 +257,7 @@ efi_main (EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable){
         if(EFI_ERROR(rngStatus)){
                 uefi_call_wrapper(SystemTable->ConOut->OutputString, 2, SystemTable->ConOut, u"Couldn't get RNG Protocol");
                 uefi_call_wrapper(SystemTable->RuntimeServices->ResetSystem, 4, EfiResetShutdown, EFI_SUCCESS, 0, NULL);
-                return EFI_SUCCESS;
+                return -1;
         }
 
         int interval = 2500000, segmentSize = 50;        
@@ -303,7 +299,7 @@ efi_main (EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable){
         EFI_STATUS randStatus = random(rng, &board, &snake);
         if(EFI_ERROR(randStatus)){
                 uefi_call_wrapper(SystemTable->RuntimeServices->ResetSystem, 4, EfiResetShutdown, EFI_SUCCESS, 0, NULL);
-                return EFI_SUCCESS;
+                return -1;
         }
 
         EFI_EVENT events[2];
@@ -333,8 +329,117 @@ efi_main (EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable){
                         }
                 }
         }
+        return snake.segments.size;
+}
 
+int menu(EFI_SYSTEM_TABLE *SystemTable){
+        uefi_call_wrapper(SystemTable->ConOut->SetAttribute, 2, SystemTable->ConOut, EFI_TEXT_ATTR(EFI_WHITE, EFI_BLACK));
+        int currentSelection = PLAY;
+        const CHAR16 *options[] = {
+                u"  PLAY  ",
+                u"  QUIT  "
+        };
 
+        while(true){
+                uefi_call_wrapper(SystemTable->ConOut->ClearScreen, 1, SystemTable->ConOut);
+                for(int i = 0; i < 2; i++){
+                        uefi_call_wrapper(SystemTable->ConOut->SetCursorPosition, 3, SystemTable->ConOut, 10, 5 + i);
+                        if(i == currentSelection){
+                                uefi_call_wrapper(SystemTable->ConOut->SetAttribute, 2, SystemTable->ConOut, EFI_TEXT_ATTR(EFI_WHITE, EFI_BROWN));
+                                uefi_call_wrapper(SystemTable->ConOut->OutputString, 2, SystemTable->ConOut, options[i]);
+                                uefi_call_wrapper(SystemTable->ConOut->SetAttribute, 2, SystemTable->ConOut, EFI_TEXT_ATTR(EFI_WHITE, EFI_BLACK));
+                        }
+                        else{
+                                uefi_call_wrapper(SystemTable->ConOut->OutputString, 2, SystemTable->ConOut, options[i]);
+                        }
+                }
+                EFI_INPUT_KEY key = getKey(SystemTable);
+
+                if(key.ScanCode == SCANCODE_UP_ARROW){
+                        currentSelection = PLAY;
+                }
+                else if(key.ScanCode == SCANCODE_DOWN_ARROW){
+                        currentSelection = QUIT;
+                }
+                else if(key.UnicodeChar == u'\r'){
+                        return currentSelection;
+                }
+        }
+}
+
+CHAR16* intToString(EFI_SYSTEM_TABLE *SystemTable, int x){
+        CHAR16* s = NULL;
+        uefi_call_wrapper(SystemTable->BootServices->AllocatePool, 3, 
+                      EfiLoaderData, 15 * sizeof(CHAR16), (void**)&s);
+        
+        if(x == 0){
+                s[0] = u'0';
+                s[1] = u'\0';
+                return s;
+        }
+        int i = 0;
+        while(x != 0){
+                s[i] = (x % 10) + u'0';
+                i++;
+                x /= 10;
+        }
+        
+        for(int j = 0; j < i / 2; j++){
+                CHAR16 tmp = s[j];
+                s[j] = s[i - j - 1];
+                s[i - j - 1] = tmp;
+        }
+        s[i] = u'\0';
+        return s;
+}
+
+void printResult(EFI_SYSTEM_TABLE *SystemTable, int result){
+        uefi_call_wrapper(SystemTable->ConOut->ClearScreen, 1, SystemTable->ConOut);
+        uefi_call_wrapper(SystemTable->ConOut->SetAttribute, 2, SystemTable->ConOut, EFI_TEXT_ATTR(EFI_WHITE, EFI_BLACK));
+        uefi_call_wrapper(SystemTable->ConOut->SetCursorPosition, 3, SystemTable->ConOut, 10, 5); 
+        if(result == -1){
+                uefi_call_wrapper(SystemTable->ConOut->OutputString, 2, SystemTable->ConOut, u"ERROR OCCURED");
+        }
+        else{
+                CHAR16* score = intToString(SystemTable, result);
+                uefi_call_wrapper(SystemTable->ConOut->OutputString, 2, SystemTable->ConOut, u"YOUR SCORE: ");
+                uefi_call_wrapper(SystemTable->ConOut->OutputString, 2, SystemTable->ConOut, score);
+        }
+
+        uefi_call_wrapper(SystemTable->ConOut->SetCursorPosition, 3, SystemTable->ConOut, 10, 7); 
+        uefi_call_wrapper(SystemTable->ConOut->OutputString, 2, SystemTable->ConOut, u"PRESS ANY KEY TO CONTINUE");
+
+        getKey(SystemTable);
+}
+
+EFI_STATUS
+EFIAPI
+efi_main (EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable){
+        (void)ImageHandle;
+
+        //FOR DEBUGGING
+        EFI_LOADED_IMAGE_PROTOCOL *loaded_image;
+        EFI_GUID LoadedImageProtocolGUID = EFI_LOADED_IMAGE_PROTOCOL_GUID;
+        uefi_call_wrapper(SystemTable->BootServices->HandleProtocol, 3, ImageHandle, &LoadedImageProtocolGUID, (void **)&loaded_image);
+        volatile uint64_t *marker_ptr = (uint64_t *)0x10000;
+        volatile uint64_t *image_base_ptr = (uint64_t *)0x10008;
+        *image_base_ptr = (uint64_t)loaded_image->ImageBase;
+        *marker_ptr = 0xDEADBEEF;
+        //Print(L"Program loaded at: 0x%lx\n", (UINT64)loaded_image->ImageBase);
+        //FOR DEBUGGING
+
+        while(true){
+                int choice = menu(SystemTable);
+
+                if(choice == QUIT){
+                        break;
+                }
+
+                if(choice == PLAY){
+                        int result = snake(SystemTable);
+                        printResult(SystemTable, result);
+                }
+        }
 
         uefi_call_wrapper(SystemTable->RuntimeServices->ResetSystem, 4, EfiResetShutdown, EFI_SUCCESS, 0, NULL);
 
