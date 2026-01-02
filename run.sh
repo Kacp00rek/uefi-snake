@@ -22,7 +22,5 @@ else
   -drive format=raw,file=efi.img \
   -net none
 fi
-#qemu-system-x86_64 -cpu qemu64 -bios /usr/share/edk2/ovmf/OVMF_CODE.fd -drive file=efi.img,if=ide
-#-debugcon file:uefi_debug.log -global isa-debugcon.iobase=0x402 \
 
 
