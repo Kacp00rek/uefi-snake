@@ -30,14 +30,21 @@ if [ ! -f efi.img ]; then
     parted efi.img -s -a minimal mkpart EFI FAT16 2048s 93716s
     parted efi.img -s -a minimal toggle 1 boot
     
+    # Create a empty partition
     dd if=/dev/zero of=/tmp/part.img bs=512 count=91669
     mformat -i /tmp/part.img -h 32 -t 32 -n 64 -c 1
     
+    # Insert the FAT parition to disk image
     dd if=/tmp/part.img of=efi.img bs=512 count=91669 seek=2048 conv=notrunc
 fi
 
+# Extract FAT partition from disk image
 dd if=efi.img of=/tmp/part.img bs=512 skip=2048 count=91669 status=none
+
+# Update the changes in part.img
 mkdir -p EFI/BOOT && cp main.efi EFI/BOOT/BOOTX64.EFI
 mcopy -o -i /tmp/part.img -s EFI ::
+
+# Insert the updated FAT partition to disk image
 dd if=/tmp/part.img of=efi.img bs=512 count=91669 seek=2048 conv=notrunc status=none
 

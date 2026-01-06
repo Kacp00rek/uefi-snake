@@ -7,8 +7,9 @@
 #define LIVES   0
 #define PLAY    0
 #define HALL    1
-#define PADDING 10
 #define ENTER   u'\r'
+#define PADDING_LEFT    10
+#define PADDING_UP      5
 #define BACKSPACE       0x08
 #define ACCELERATION    0.97   
 #define LIGHT_GREEN     0x0090EE90
@@ -78,6 +79,12 @@ void push_back(EFI_SYSTEM_TABLE *SystemTable, struct Vector *snake, struct Pair 
         }
         snake->data[snake->size] = *segment;
         snake->size++;
+}
+
+void free(EFI_SYSTEM_TABLE *SystemTable, struct Vector *snake) {
+    uefi_call_wrapper(SystemTable->BootServices->FreePool, 1, snake->data);
+    snake->size = 0;
+    snake->capacity = 0;
 }
 
 EFI_INPUT_KEY getKey(EFI_SYSTEM_TABLE *SystemTable){
@@ -274,7 +281,8 @@ int snake(EFI_SYSTEM_TABLE *SystemTable){
 
         if(EFI_ERROR(gopStatus)){
                 uefi_call_wrapper(SystemTable->ConOut->OutputString, 2, SystemTable->ConOut, u"Couldn't get GOP");
-                uefi_call_wrapper(SystemTable->RuntimeServices->ResetSystem, 4, EfiResetShutdown, EFI_SUCCESS, 0, NULL);
+                uefi_call_wrapper(SystemTable->RuntimeServices->ResetSystem, 4,
+                                        EfiResetShutdown, EFI_SUCCESS, 0, NULL);
                 return -1;
         }
         uefi_call_wrapper(gop->SetMode, 2, gop, 0);
@@ -285,13 +293,14 @@ int snake(EFI_SYSTEM_TABLE *SystemTable){
                                                         &rngGuid, NULL, (void**)&rng);
 
         if(EFI_ERROR(rngStatus)){
-                uefi_call_wrapper(SystemTable->ConOut->OutputString, 2, SystemTable->ConOut, u"Couldn't get RNG Protocol");
-                uefi_call_wrapper(SystemTable->RuntimeServices->ResetSystem, 4, EfiResetShutdown, EFI_SUCCESS, 0, NULL);
+                uefi_call_wrapper(SystemTable->ConOut->OutputString, 2,
+                        SystemTable->ConOut, u"Couldn't get RNG Protocol");
+                uefi_call_wrapper(SystemTable->RuntimeServices->ResetSystem, 4,
+                        EfiResetShutdown, EFI_SUCCESS, 0, NULL);
                 return -1;
         }
 
         int interval = INITIAL_INTERVAL, segmentSize = 50;   
-        double acceleration = ACCELERATION;     
         int width = (gop->Mode->Info->HorizontalResolution / segmentSize) * segmentSize;
         int height = (gop->Mode->Info->VerticalResolution / segmentSize) * segmentSize;
 
@@ -342,14 +351,14 @@ int snake(EFI_SYSTEM_TABLE *SystemTable){
                 uefi_call_wrapper(SystemTable->BootServices->WaitForEvent, 3, 2, events, &index);
                 if(index == 0){
                         int snakeStatus = snakeMove(gop, &snake, &board, SystemTable);
-                        if(snakeStatus == DIED){
+                        if(snakeStatus == DIED || snake.segments.size == (board.width / board.segmentSize) * (board.height / board.segmentSize)){
                                 break;
                         }
                         if(!board.targetAlive){
                                 random(rng, &board, &snake);
                                 board.targetAlive = true;
                                 drawRect(gop, board.target.x, board.target.y, board.segmentSize, board.segmentSize, board.targetColor);
-                                interval *= acceleration;
+                                interval *= ACCELERATION;
                                 uefi_call_wrapper(SystemTable->BootServices->SetTimer, 3,
                                                         events[0], TimerPeriodic, interval);
                         }
@@ -361,7 +370,10 @@ int snake(EFI_SYSTEM_TABLE *SystemTable){
                         }
                 }
         }
-        return snake.segments.size;
+        int score = snake.segments.size;
+        free(SystemTable, &snake.segments);
+        
+        return score;
 }
 
 int menu(EFI_SYSTEM_TABLE *SystemTable){
@@ -381,7 +393,7 @@ int menu(EFI_SYSTEM_TABLE *SystemTable){
                         uefi_call_wrapper(SystemTable->ConOut->ClearScreen, 1, SystemTable->ConOut);
                         for(int i = 0; i < 3; i++){
                                 uefi_call_wrapper(SystemTable->ConOut->SetCursorPosition, 3,
-                                                        SystemTable->ConOut, PADDING, 5 + i);
+                                                        SystemTable->ConOut, PADDING_LEFT, PADDING_UP + i);
                                 if(i == currentSelection){
                                         uefi_call_wrapper(SystemTable->ConOut->SetAttribute, 2,
                                                                 SystemTable->ConOut,
@@ -426,18 +438,14 @@ int menu(EFI_SYSTEM_TABLE *SystemTable){
         }
 }
 
-CHAR16* intToString(EFI_SYSTEM_TABLE *SystemTable, int x){
-        CHAR16* s = NULL;
-        uefi_call_wrapper(SystemTable->BootServices->AllocatePool, 3, 
-                      EfiLoaderData, 15 * sizeof(CHAR16), (void**)&s);
-        
+void intToString(int x, CHAR16* s){
         if(x == 0){
                 s[0] = u'0';
                 s[1] = u'\0';
-                return s;
+                return;
         }
         int i = 0;
-        while(x != 0){
+        while(x > 0){
                 s[i] = (x % 10) + u'0';
                 i++;
                 x /= 10;
@@ -449,7 +457,6 @@ CHAR16* intToString(EFI_SYSTEM_TABLE *SystemTable, int x){
                 s[i - j - 1] = tmp;
         }
         s[i] = u'\0';
-        return s;
 }
 
 void saveScore(EFI_SYSTEM_TABLE *SystemTable, int result, CHAR16 name[4]){
@@ -472,7 +479,7 @@ void saveScore(EFI_SYSTEM_TABLE *SystemTable, int result, CHAR16 name[4]){
         uefi_call_wrapper(root->Open, 5,
                                 root,
                                 &file,
-                                (CHAR16*)L"record.txt",
+                                (CHAR16*)u"record.txt",
                                 EFI_FILE_MODE_CREATE | EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE,
                                 0
         );
@@ -514,20 +521,21 @@ void printResult(EFI_SYSTEM_TABLE *SystemTable, int result){
         uefi_call_wrapper(SystemTable->ConOut->ClearScreen, 1, SystemTable->ConOut);
         uefi_call_wrapper(SystemTable->ConOut->SetAttribute, 2,
                                 SystemTable->ConOut, EFI_TEXT_ATTR(EFI_WHITE, EFI_BLACK));
-        uefi_call_wrapper(SystemTable->ConOut->SetCursorPosition, 3, SystemTable->ConOut, PADDING, 5); 
+        uefi_call_wrapper(SystemTable->ConOut->SetCursorPosition, 3, SystemTable->ConOut, PADDING_LEFT, PADDING_UP); 
         if(result == -1){
                 uefi_call_wrapper(SystemTable->ConOut->OutputString, 2, SystemTable->ConOut, u"ERROR OCCURED");
         }
         else{
-                CHAR16* score = intToString(SystemTable, result);
+                CHAR16 score[15];
+                intToString(result, score);
                 uefi_call_wrapper(SystemTable->ConOut->OutputString, 2, SystemTable->ConOut, u"YOUR SCORE: ");
                 uefi_call_wrapper(SystemTable->ConOut->OutputString, 2, SystemTable->ConOut, score);
-                uefi_call_wrapper(SystemTable->BootServices->FreePool, 1, score);
         }
 
-        uefi_call_wrapper(SystemTable->ConOut->SetCursorPosition, 3, SystemTable->ConOut, PADDING, 7); 
+        uefi_call_wrapper(SystemTable->ConOut->SetCursorPosition, 3,
+                                SystemTable->ConOut, PADDING_LEFT, PADDING_UP + 2); 
         uefi_call_wrapper(SystemTable->ConOut->OutputString, 2, SystemTable->ConOut, u"ENTER YOUR NAME: ");
-        int commandLength = 27;
+        int commandLength = PADDING_LEFT + 17;
         CHAR16 name[4] = {u' ', u' ', u' ', u'\0'};
         int counter = 0;
         EFI_INPUT_KEY key;
@@ -541,7 +549,7 @@ void printResult(EFI_SYSTEM_TABLE *SystemTable, int result){
                 if(key.UnicodeChar == BACKSPACE && counter > 0){
                         counter--;
                         uefi_call_wrapper(SystemTable->ConOut->SetCursorPosition, 3,
-                                                SystemTable->ConOut, commandLength + counter, 7);
+                                                SystemTable->ConOut, commandLength + counter, PADDING_UP + 2);
                         uefi_call_wrapper(SystemTable->ConOut->OutputString, 2, SystemTable->ConOut, u" ");
                         name[counter] = u' ';
                 }
@@ -550,7 +558,7 @@ void printResult(EFI_SYSTEM_TABLE *SystemTable, int result){
                         name[counter] = key.UnicodeChar - 32;
                         CHAR16 str[2] = {name[counter], u'\0'};
                         uefi_call_wrapper(SystemTable->ConOut->SetCursorPosition, 3,
-                                                SystemTable->ConOut, commandLength + counter, 7);
+                                                SystemTable->ConOut, commandLength + counter, PADDING_UP + 2);
                         uefi_call_wrapper(SystemTable->ConOut->OutputString, 2, SystemTable->ConOut, str);
                         counter++;
                 }
@@ -565,7 +573,7 @@ UINT64 getFileSize(EFI_SYSTEM_TABLE *SystemTable){
         uefi_call_wrapper(root->Open, 5,
                                 root,
                                 &file,
-                                (CHAR16*)L"record.txt",
+                                (CHAR16*)u"record.txt",
                                 EFI_FILE_MODE_CREATE | EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE,
                                 0
         );
@@ -596,7 +604,7 @@ int hallOfFame(EFI_SYSTEM_TABLE *SystemTable, int page, int maximum){
         uefi_call_wrapper(root->Open, 5,
                                 root,
                                 &file,
-                                (CHAR16*)L"record.txt",
+                                (CHAR16*)u"record.txt",
                                 EFI_FILE_MODE_CREATE | EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE,
                                 0
         );
@@ -605,17 +613,18 @@ int hallOfFame(EFI_SYSTEM_TABLE *SystemTable, int page, int maximum){
         int counter = RESULTS_PER_PAGE * page + 1;
         uefi_call_wrapper(file->SetPosition, 2, file, page * SCORE_LENGTH * RESULTS_PER_PAGE);
         for(int i = 0; i < RESULTS_PER_PAGE; i++){
-                uefi_call_wrapper(SystemTable->ConOut->SetCursorPosition, 3, SystemTable->ConOut, PADDING, 5 + i); 
+                uefi_call_wrapper(SystemTable->ConOut->SetCursorPosition, 3,
+                                        SystemTable->ConOut, PADDING_LEFT, PADDING_UP + i); 
                 UINTN size = SCORE_LENGTH;
                 uefi_call_wrapper(file->Read, 3, file, &size, buffer);
                 if(size == 0){
                         break;
                 }
-                CHAR16* index = intToString(SystemTable, counter + i);
+                CHAR16 index[15];
+                intToString(counter + i, index);
                 CHAR16 name[] = {buffer[0], buffer[1], buffer[2], u'\0'};
 
                 uefi_call_wrapper(SystemTable->ConOut->OutputString, 2, SystemTable->ConOut, index);
-                uefi_call_wrapper(SystemTable->BootServices->FreePool, 1, index);
                 uefi_call_wrapper(SystemTable->ConOut->OutputString, 2, SystemTable->ConOut, u". ");
                 uefi_call_wrapper(SystemTable->ConOut->OutputString, 2, SystemTable->ConOut, name);
                 uefi_call_wrapper(SystemTable->ConOut->OutputString, 2, SystemTable->ConOut, u" - ");
@@ -628,21 +637,25 @@ int hallOfFame(EFI_SYSTEM_TABLE *SystemTable, int page, int maximum){
                         }
                 }
         }
-
-        CHAR16* curr = intToString(SystemTable, page + 1);
-        CHAR16* maxPage = intToString(SystemTable, maximum + 1);
+        CHAR16 curr[15];
+        if(maximum >= 0){
+                intToString(page + 1, curr);
+        }
+        else{
+                intToString(0, curr);
+        }
+        CHAR16 maxPage[15];
+        intToString(maximum + 1, maxPage);
         uefi_call_wrapper(SystemTable->ConOut->SetCursorPosition, 3,
-                                SystemTable->ConOut, PADDING, 5 + RESULTS_PER_PAGE + 1); 
+                                SystemTable->ConOut, PADDING_LEFT, PADDING_UP + RESULTS_PER_PAGE + 1); 
         uefi_call_wrapper(SystemTable->ConOut->OutputString, 2, SystemTable->ConOut, u"<- (");
         uefi_call_wrapper(SystemTable->ConOut->OutputString, 2, SystemTable->ConOut, curr);
-        uefi_call_wrapper(SystemTable->BootServices->FreePool, 1, curr);
         uefi_call_wrapper(SystemTable->ConOut->OutputString, 2, SystemTable->ConOut, u"/");
         uefi_call_wrapper(SystemTable->ConOut->OutputString, 2, SystemTable->ConOut, maxPage);
-        uefi_call_wrapper(SystemTable->BootServices->FreePool, 1, maxPage);
         uefi_call_wrapper(SystemTable->ConOut->OutputString, 2, SystemTable->ConOut, u") ->");
 
         uefi_call_wrapper(SystemTable->ConOut->SetCursorPosition, 3,
-                                SystemTable->ConOut, PADDING, 5 + RESULTS_PER_PAGE + 2); 
+                                SystemTable->ConOut, PADDING_LEFT, PADDING_UP + RESULTS_PER_PAGE + 2); 
         uefi_call_wrapper(SystemTable->ConOut->OutputString, 2, SystemTable->ConOut, u"PRESS Q TO LEAVE");
 
         uefi_call_wrapper(file->Close, 1, file);
@@ -695,7 +708,6 @@ efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable){
         volatile uint64_t *image_base_ptr = (uint64_t *)0x10008;
         *image_base_ptr = (uint64_t)loaded_image->ImageBase;
         *marker_ptr = 0xDEADBEEF;
-        //Print(L"Program loaded at: 0x%lx\n", (UINT64)loaded_image->ImageBase);
         //FOR DEBUGGING
 
         while(true){
