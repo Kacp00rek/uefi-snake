@@ -1,11 +1,13 @@
 #!/bin/bash
 
+cd "$(dirname "$0")/.."
+
 EFI_DIR="$HOME/gnu-efi"
 
 # Compile main.c -> main.o
 gcc -I"$EFI_DIR/inc" -fpic -ffreestanding -fno-stack-protector -fno-stack-check \
     -fshort-wchar -mno-red-zone -maccumulate-outgoing-args -ggdb \
-    -c main.c -o main.o 
+    -c src/main.c -o main.o 
 
 # Link main.o -> main.so
 ld -shared -Bsymbolic \
