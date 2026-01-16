@@ -1,4 +1,5 @@
 # UEFI Application Snake
+<img width="1100" height="443" alt="snake" src="https://github.com/user-attachments/assets/e46a1dc0-34a0-45d3-9151-1d2d6a874120" />
 
 A low-level, bare-metal Snake game written in C for the UEFI environment. This project demonstrates direct interaction with UEFI protocols without an underlying operating system.
 
@@ -11,6 +12,9 @@ A low-level, bare-metal Snake game written in C for the UEFI environment. This p
 - **Graphics**: Uses the `EFI_GRAPHICS_OUTPUT_PROTOCOL` (GOP) for pixel manipulation.
 - **Dynamic Memory**: Custom vector implementation with `AllocatePool` and `FreePool`.
 - **Input**: Handles keyboard events via `WaitForKey` and `ReadKeyStroke`.
+
+<img width="413" height="291" alt="menu" src="https://github.com/user-attachments/assets/0542b483-c06c-416b-9f35-2954e1ed3363" />
+<img width="200" height="291" alt="hall" src="https://github.com/user-attachments/assets/547656ad-1028-4d6f-88a3-06b99cfa5a01" />
 
 ## Requirements
 - `gcc`, `binutils` (objcopy, ld)
@@ -69,4 +73,5 @@ This project was heavily inspired by the [OSDev Wiki](https://wiki.osdev.org/UEF
 
 
 **Author:** Kacper Grzelakowski  
+
 **GitHub:** [github.com/Kacp00rek](https://github.com/Kacp00rek)
