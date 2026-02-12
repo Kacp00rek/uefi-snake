@@ -6,6 +6,7 @@ A low-level, bare-metal Snake game written in C for the UEFI environment. This p
 ## Project Structure
 - `src/`: Contains the C source code (`main.c`).
 - `scripts/`: Shell scripts for automated building and execution.
+- `docs/`: Contains a detailed report about the project.
 
 ## Key Features
 - **File System**: Hall of Fame management using `SimpleFileSystemProtocol`.
@@ -66,6 +67,9 @@ layout split
 ```
 After synchronization, you can use standard GDB commands like stepi, next, or break.
 
+
+## Report
+Read the full report about the project [here](./docs/report.pdf).
 
 ## Resources
 This project was heavily inspired by the [OSDev Wiki](https://wiki.osdev.org/UEFI), which is a great resource for anyone interested in UEFI development.
